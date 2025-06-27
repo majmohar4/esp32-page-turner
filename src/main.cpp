@@ -4,7 +4,7 @@
 const int btnUpPin = 13;
 const int btnDownPin = 12;
 const int btnNextPin = 14;
-const int statusLED = 22;  // Changed to GPIO 22
+const int statusLED = 22;  // Bluetooth status LED pin
 const int battPin = 34;
 
 const float voltageDividerRatio = 2.0; // if R1 = R2 = 100k
@@ -74,10 +74,10 @@ void loop() {
 
   // ----- SCROLL UP -----
   if (upNow == LOW && lastUp == HIGH) {
-    if (now - lastUpPress < doubleClickWindow) {
+    if (now - lastUpPress <= doubleClickWindow) {
       Keyboard.write(KEY_RIGHT_ARROW);
       Serial.println("Double press UP → RIGHT ARROW");
-      lastUpPress = 0;
+      lastUpPress = 0;  // reset to avoid triple triggers
     } else {
       Mouse.move(0, 0, 1);
       lastUpPress = now;
@@ -92,7 +92,7 @@ void loop() {
 
   // ----- SCROLL DOWN -----
   if (downNow == LOW && lastDown == HIGH) {
-    if (now - lastDownPress < doubleClickWindow) {
+    if (now - lastDownPress <= doubleClickWindow) {
       Keyboard.write(KEY_LEFT_ARROW);
       Serial.println("Double press DOWN → LEFT ARROW");
       lastDownPress = 0;
