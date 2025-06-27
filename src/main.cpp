@@ -1,143 +1,119 @@
 #include <Arduino.h>
 #include <BleCombo.h>
 
-const int btnScrollUp = 13;
-const int btnScrollDown = 12;
-const int btnNext = 14;
-const int statusLED = 2;
+const int btnUpPin = 13;
+const int btnDownPin = 12;
+const int btnNextPin = 14;
+const int statusLED = 22;  // Changed to GPIO 22
+const int battPin = 34;
 
-const int battPin = 34;       // ADC pin for battery voltage
-const float voltageDividerRatio = 2.0; // Adjust based on your resistors
+const float voltageDividerRatio = 2.0; // if R1 = R2 = 100k
 
-// Timing configs
+unsigned long lastScrollTime = 0;
 const unsigned long scrollInterval = 150;
-const unsigned long doublePressMaxDelay = 600;
-const unsigned long holdScrollRepeatDelay = 100;
-const unsigned long batteryUpdateInterval = 5000;
+const unsigned long holdDelay = 100;
+const unsigned long doubleClickWindow = 600;
+const unsigned long batteryReportInterval = 5000;
 
-unsigned long lastActionTime = 0;
 unsigned long lastUpPress = 0;
 unsigned long lastDownPress = 0;
-unsigned long lastBatteryUpdate = 0;
+unsigned long lastBatteryReport = 0;
 
 bool lastUp = HIGH;
 bool lastDown = HIGH;
-bool lastRight = HIGH;
-
-bool upHeld = false;
-bool downHeld = false;
-unsigned long upHoldStart = 0;
-unsigned long downHoldStart = 0;
+bool lastNext = HIGH;
 
 void setup() {
   Serial.begin(115200);
-
-  pinMode(btnScrollUp, INPUT_PULLUP);
-  pinMode(btnScrollDown, INPUT_PULLUP);
-  pinMode(btnNext, INPUT_PULLUP);
+  pinMode(btnUpPin, INPUT_PULLUP);
+  pinMode(btnDownPin, INPUT_PULLUP);
+  pinMode(btnNextPin, INPUT_PULLUP);
   pinMode(statusLED, OUTPUT);
-
-  analogReadResolution(12); // 12-bit ADC for ESP32
-
+  analogReadResolution(12);
   delay(1000);
   Keyboard.begin();
   Mouse.begin();
 }
 
-void updateBattery() {
+void reportBattery() {
   int raw = analogRead(battPin);
   float voltage = raw * (3.3 / 4095.0) * voltageDividerRatio;
-
-  // Map voltage (example: 3.0V = 0%, 4.2V = 100%)
-  int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100);
-  if (percent < 0) percent = 0;
-  if (percent > 100) percent = 100;
-
-  Serial.printf("Battery voltage: %.2f V, level: %d%%\n", voltage, percent);
-
+  int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100.0);
+  percent = constrain(percent, 0, 100);
   Keyboard.setBatteryLevel(percent);
+  Serial.printf("Battery: %.2fV (%d%%)\n", voltage, percent);
 }
 
 void loop() {
-  static unsigned long lastLED = 0;
-  static bool ledOn = false;
   unsigned long now = millis();
 
-  // LED status blinking if disconnected
+  // BLE not connected = blink LED
   if (!Keyboard.isConnected()) {
-    if (now - lastLED > 200) {
+    static unsigned long lastBlink = 0;
+    static bool ledOn = false;
+    if (now - lastBlink > 200) {
       ledOn = !ledOn;
       digitalWrite(statusLED, ledOn ? HIGH : LOW);
-      lastLED = now;
+      lastBlink = now;
     }
     return;
   }
+
+  // BLE connected = LED ON
   digitalWrite(statusLED, HIGH);
 
-  // Update battery level every 5 seconds
-  if (now - lastBatteryUpdate > batteryUpdateInterval) {
-    updateBattery();
-    lastBatteryUpdate = now;
+  if (now - lastBatteryReport > batteryReportInterval) {
+    reportBattery();
+    lastBatteryReport = now;
   }
 
-  // -------- UP button --------
-  bool nowUp = digitalRead(btnScrollUp);
-  if (nowUp == LOW) {
-    if (!upHeld && lastUp == HIGH) {
-      if (now - lastUpPress < doublePressMaxDelay) {
-        Serial.println("Double press UP => RIGHT ARROW");
-        Keyboard.write(KEY_RIGHT_ARROW);
-        lastUpPress = 0;
-      } else {
-        upHoldStart = now;
-        lastUpPress = now;
-      }
+  // Read button states
+  bool upNow = digitalRead(btnUpPin);
+  bool downNow = digitalRead(btnDownPin);
+  bool nextNow = digitalRead(btnNextPin);
+
+  // ----- SCROLL UP -----
+  if (upNow == LOW && lastUp == HIGH) {
+    if (now - lastUpPress < doubleClickWindow) {
+      Keyboard.write(KEY_RIGHT_ARROW);
+      Serial.println("Double press UP → RIGHT ARROW");
+      lastUpPress = 0;
+    } else {
+      Mouse.move(0, 0, 1);
+      lastUpPress = now;
+      Serial.println("Scroll UP");
     }
-    upHeld = true;
-  } else {
-    upHeld = false;
   }
-
-  if (upHeld && now - upHoldStart > holdScrollRepeatDelay && now - lastActionTime > scrollInterval) {
-    Mouse.move(0, 0, 1); // scroll up
-    Serial.println("Hold scroll UP");
-    lastActionTime = now;
+  if (upNow == LOW && now - lastScrollTime > holdDelay) {
+    Mouse.move(0, 0, 1);
+    lastScrollTime = now;
   }
-  lastUp = nowUp;
+  lastUp = upNow;
 
-  // -------- DOWN button --------
-  bool nowDown = digitalRead(btnScrollDown);
-  if (nowDown == LOW) {
-    if (!downHeld && lastDown == HIGH) {
-      if (now - lastDownPress < doublePressMaxDelay) {
-        Serial.println("Double press DOWN => LEFT ARROW");
-        Keyboard.write(KEY_LEFT_ARROW);
-        lastDownPress = 0;
-      } else {
-        downHoldStart = now;
-        lastDownPress = now;
-      }
+  // ----- SCROLL DOWN -----
+  if (downNow == LOW && lastDown == HIGH) {
+    if (now - lastDownPress < doubleClickWindow) {
+      Keyboard.write(KEY_LEFT_ARROW);
+      Serial.println("Double press DOWN → LEFT ARROW");
+      lastDownPress = 0;
+    } else {
+      Mouse.move(0, 0, -1);
+      lastDownPress = now;
+      Serial.println("Scroll DOWN");
     }
-    downHeld = true;
-  } else {
-    downHeld = false;
   }
-
-  if (downHeld && now - downHoldStart > holdScrollRepeatDelay && now - lastActionTime > scrollInterval) {
-    Mouse.move(0, 0, -1); // scroll down
-    Serial.println("Hold scroll DOWN");
-    lastActionTime = now;
+  if (downNow == LOW && now - lastScrollTime > holdDelay) {
+    Mouse.move(0, 0, -1);
+    lastScrollTime = now;
   }
-  lastDown = nowDown;
+  lastDown = downNow;
 
-  // -------- RIGHT button --------
-  bool nowRight = digitalRead(btnNext);
-  if (nowRight == LOW && lastRight == HIGH && now - lastActionTime > scrollInterval) {
-    Serial.println("RIGHT ARROW (Single press)");
+  // ----- NEXT → Right arrow -----
+  if (nextNow == LOW && lastNext == HIGH) {
     Keyboard.write(KEY_RIGHT_ARROW);
-    lastActionTime = now;
+    Serial.println("NEXT button → RIGHT ARROW");
   }
-  lastRight = nowRight;
+  lastNext = nextNow;
 
   delay(5);
 }
